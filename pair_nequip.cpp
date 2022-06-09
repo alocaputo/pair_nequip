@@ -1,3 +1,4 @@
+
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://lammps.sandia.gov/, Sandia National Laboratories
@@ -443,10 +444,10 @@ void PairNEQUIP::compute(int eflag, int vflag){
 
 
   c10::Dict<std::string, torch::Tensor> input;
-  input.insert("pos", pos_tensor.to(device));
+  input.insert("pos", pos_tensor.to(torch::kFloat64).to(device));
   input.insert("edge_index", edges_tensor.to(device));
-  input.insert("edge_cell_shift", edge_cell_shifts_tensor.to(device));
-  input.insert("cell", cell_tensor.to(device));
+  input.insert("edge_cell_shift", edge_cell_shifts_tensor.to(torch::kFloat64).to(device));
+  input.insert("cell", cell_tensor.to(torch::kFloat64).to(device));
   input.insert("atom_types", tag2type_tensor.to(device));
   std::vector<torch::IValue> input_vector(1, input);
 
@@ -463,16 +464,16 @@ void PairNEQUIP::compute(int eflag, int vflag){
   auto output = model.forward(input_vector).toGenericDict();
 
   torch::Tensor forces_tensor = output.at("forces").toTensor().cpu();
-  auto forces = forces_tensor.accessor<float, 2>();
+  auto forces = forces_tensor.accessor<double, 2>();
 
   torch::Tensor total_energy_tensor = output.at("total_energy").toTensor().cpu();
 
   // store the total energy where LAMMPS wants it
-  eng_vdwl = total_energy_tensor.data_ptr<float>()[0];
+  eng_vdwl = total_energy_tensor.data_ptr<double>()[0];
 
   torch::Tensor atomic_energy_tensor = output.at("atomic_energy").toTensor().cpu();
-  auto atomic_energies = atomic_energy_tensor.accessor<float, 2>();
-  float atomic_energy_sum = atomic_energy_tensor.sum().data_ptr<float>()[0];
+  auto atomic_energies = atomic_energy_tensor.accessor<double, 2>();
+  double atomic_energy_sum = atomic_energy_tensor.sum().data_ptr<double>()[0];
 
   if(debug_mode){
     std::cout << "NequIP model output:\n";
@@ -497,6 +498,76 @@ void PairNEQUIP::compute(int eflag, int vflag){
   }
 
   // TODO: Virial stuff? (If there even is a pairwise force concept here)
+  torch::Tensor virial_t = torch::zeros({3,3}, torch::TensorOptions().dtype(torch::kFloat64));
+  double virial_fd_delta = 1.0e-4;
+  for (int i=0; i<3; i++) {
+    for (int j=0; j<3; j++) {
+      torch::Tensor deform = torch::eye(3);
+      deform[i][j] += virial_fd_delta;
+      if( i != j){
+        deform[j][i] += virial_fd_delta;
+      } 
+
+      
+      //plus.set_cell(np.matmul(deform, cell), scale_atoms=True)
+      torch::Tensor plus_cell_tensor = torch::matmul(deform, cell_tensor);
+      auto M_plus = torch::linalg::solve(cell_tensor, plus_cell_tensor);
+      torch::Tensor plus_pos_tensor = torch::matmul(pos_tensor,M_plus);
+
+      
+
+      //eval()
+      c10::Dict<std::string, torch::Tensor> plus_input;
+      plus_input.insert("pos", plus_pos_tensor.to(torch::kFloat64).to(device));
+      plus_input.insert("edge_index", edges_tensor.to(device));
+      plus_input.insert("edge_cell_shift", edge_cell_shifts_tensor.to(torch::kFloat64).to(device));
+      plus_input.insert("cell", plus_cell_tensor.to(torch::kFloat64).to(device));
+      plus_input.insert("atom_types", tag2type_tensor.to(device));
+      std::vector<torch::IValue> plus_input_vector(1, plus_input);
+
+      auto plus_output = model.forward(plus_input_vector).toGenericDict();
+      double e_plus = (plus_output.at("total_energy").toTensor().cpu())[0][0].item<double>();
+
+      deform = torch::eye(3);
+      deform[i][j] -= virial_fd_delta;
+      if( i != j){
+        deform[j][i] -= virial_fd_delta;
+      } 
+       
+      //minus.set_cell(np.matmul(deform, cell), scale_atoms=True)
+      torch::Tensor minus_cell_tensor = torch::matmul(deform, cell_tensor);
+      auto M_minus = torch::linalg::solve(cell_tensor, minus_cell_tensor);
+      torch::Tensor minus_pos_tensor = torch::matmul(pos_tensor, M_minus);
+      
+
+      //eval()
+      c10::Dict<std::string, torch::Tensor> minus_input;
+      minus_input.insert("pos", minus_pos_tensor.to(torch::kFloat64).to(device));
+      minus_input.insert("edge_index", edges_tensor.to(device));
+      minus_input.insert("edge_cell_shift", edge_cell_shifts_tensor.to(torch::kFloat64).to(device));
+      minus_input.insert("cell", minus_cell_tensor.to(torch::kFloat64).to(device));
+      minus_input.insert("atom_types", tag2type_tensor.to(device));
+      std::vector<torch::IValue> minus_input_vector(1, minus_input);
+
+      auto minus_output = model.forward(minus_input_vector).toGenericDict();
+      double e_minus = (minus_output.at("total_energy").toTensor().cpu())[0][0].item<double>();
+
+      //auto vir = - (plus_output.at("total_energy").toTensor() - minus_output.at("total_energy").toTensor())/(2.0*virial_fd_delta);
+      virial_t[i][j] = -(e_plus-e_minus)/(2.0*virial_fd_delta);
+      virial_t[j][i] = virial_t[i][j];
+    }
+  }
+
+  virial[0] = (virial_t.cpu())[0][0].item<double>();
+  virial[1] = (virial_t.cpu())[1][1].item<double>();
+  virial[2] = (virial_t.cpu())[2][2].item<double>();
+  virial[3] = 0.5*((virial_t.cpu())[0][1].item<double>() + (virial_t.cpu())[1][0].item<double>());
+  virial[4] = 0.5*((virial_t.cpu())[0][2].item<double>() + (virial_t.cpu())[2][0].item<double>());
+  virial[5] = 0.5*((virial_t.cpu())[1][2].item<double>() + (virial_t.cpu())[2][1].item<double>());
+
+           
+  
+
 
   // TODO: Performance: Depending on how the graph network works, using tags for edges may lead to shitty memory access patterns and performance.
   // It may be better to first create tag2i as a separate loop, then set edges[edge_counter][:] = (i, tag2i[jtag]).

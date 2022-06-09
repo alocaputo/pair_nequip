@@ -3,10 +3,16 @@
 This pair style allows you to use NequIP models in LAMMPS simulations.
 
 *Note: MPI is not supported due to the message-passing nature of the network.*
+## Changes
+
+* Extended compatibility to float64 models
+* Added virial computation
+
 
 ## Pre-requisites
 
-* PyTorch or LibTorch >= 1.10.0
+* PyTorch or LibTorch >= 1.10.0 
+* *IMPORTANT* pair_nequip is not compatible with PyTorch 1.11 yet https://github.com/mir-group/pair_nequip/issues/9
 
 ## Usage in LAMMPS
 
@@ -23,14 +29,14 @@ The given names must be consistent with the names specified in the NequIP traini
 
 ### Download LAMMPS
 ```bash
-git clone -b stable_29Sep2021_update2 --depth 1 git@github.com:lammps/lammps
+git clone -b stable_29Sep2021_update2 --depth 1 https://github.com/lammps/lammps.git
 ```
 or your preferred method.
 (`--depth 1` prevents the entire history of the LAMMPS repository from being downloaded.)
 
 ### Download this repository
 ```bash
-git clone git@github.com:mir-group/pair_nequip
+git clone git@github.com:alocaputo/pair_nequip
 ```
 
 ### Patch LAMMPS
