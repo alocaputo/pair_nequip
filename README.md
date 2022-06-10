@@ -12,7 +12,6 @@ This pair style allows you to use NequIP models in LAMMPS simulations.
 ## Pre-requisites
 
 * PyTorch or LibTorch >= 1.10.0 
-* *IMPORTANT* pair_nequip is not compatible with PyTorch 1.11 yet https://github.com/mir-group/pair_nequip/issues/9
 
 ## Usage in LAMMPS
 
